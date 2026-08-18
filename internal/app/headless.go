@@ -108,7 +108,7 @@ func RunHeadless() error {
 	}
 
 	saved := 0
-	failed := 0
+	var failed []browser.Conversation
 	for i, c := range todo {
 		select {
 		case <-ctx.Done():
@@ -127,7 +127,7 @@ func RunHeadless() error {
 				return res.Err
 			}
 			applog.Error("backup %q: %v", name, res.Err)
-			failed++
+			failed = append(failed, c)
 			browser.BetweenConversations()
 			continue
 		}
@@ -136,9 +136,41 @@ func RunHeadless() error {
 		browser.BetweenConversations()
 	}
 
-	applog.Info("finished — saved %d, skipped %d, failed %d", saved, skipped, failed)
-	if failed > 0 {
-		return fmt.Errorf("%d conversation backup(s) failed", failed)
+	// Second pass over first-pass failures.
+	if len(failed) > 0 {
+		applog.Info("retrying %d failed conversation(s)…", len(failed))
+		_ = sess.ResetInbox()
+		retry := failed
+		failed = nil
+		for i, c := range retry {
+			select {
+			case <-ctx.Done():
+				applog.Error("cancelled during retry (%d saved)", saved)
+				return ctx.Err()
+			default:
+			}
+			name := c.NameStr()
+			applog.Info("retry (%d/%d) %q…", i+1, len(retry), name)
+			res := backupOne(sess, c, dir, st, nil)
+			if res.Err != nil {
+				if errors.Is(res.Err, browser.ErrSessionChallenge) {
+					applog.Error("session challenge during retry of %q: %v", name, res.Err)
+					return res.Err
+				}
+				applog.Error("retry %q: %v", name, res.Err)
+				failed = append(failed, c)
+				browser.BetweenConversations()
+				continue
+			}
+			saved++
+			applog.Info("saved PDF %s", filepath.Base(res.OutPath))
+			browser.BetweenConversations()
+		}
+	}
+
+	applog.Info("finished — saved %d, skipped %d, failed %d", saved, skipped, len(failed))
+	if len(failed) > 0 {
+		return fmt.Errorf("%d conversation backup(s) failed", len(failed))
 	}
 	return nil
 }

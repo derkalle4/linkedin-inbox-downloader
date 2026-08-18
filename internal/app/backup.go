@@ -20,8 +20,8 @@ type backupResult struct {
 
 // backupOne opens a conversation, exports a PDF, and records state.
 // onProgress receives ExportProgress; PhaseStep 0 is "Opening conversation",
-// then ExportOpenThread reports steps 1..4. One retry after a human pause on
-// open/export failure (not on session challenge errors).
+// then ExportOpenThread reports steps 1..4. Up to 3 attempts with an inbox
+// reset between failures (not on session challenge errors).
 func backupOne(
 	sess *browser.Session,
 	c browser.Conversation,
@@ -36,6 +36,7 @@ func backupOne(
 	}
 
 	const totalSteps = 1 + browser.ExportPhaseCount // open + 4 export phases
+	const maxAttempts = 3
 
 	tryOnce := func() backupResult {
 		if err := sess.CheckSessionHealthy(); err != nil {
@@ -75,14 +76,20 @@ func backupOne(
 		return backupResult{OutPath: outPath, Thread: data}
 	}
 
-	res := tryOnce()
-	if res.Err == nil {
-		return res
+	var res backupResult
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		res = tryOnce()
+		if res.Err == nil {
+			return res
+		}
+		if errors.Is(res.Err, browser.ErrSessionChallenge) {
+			return res
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		_ = sess.ResetInbox()
+		browser.HumanPause(2*time.Second, 4*time.Second)
 	}
-	if errors.Is(res.Err, browser.ErrSessionChallenge) {
-		return res
-	}
-
-	browser.HumanPause(2*time.Second, 4*time.Second)
-	return tryOnce()
+	return res
 }

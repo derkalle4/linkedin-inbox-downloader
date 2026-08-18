@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/url"
@@ -290,7 +291,7 @@ type lidJobStatus struct {
 }
 
 const (
-	listJobTimeout = 3 * time.Minute
+	listJobTimeout = 8 * time.Minute
 	loadJobTimeout = 8 * time.Minute
 )
 
@@ -408,6 +409,35 @@ func (s *Session) LoadMessageHistory(onProgress ...func(LoadProgress)) (int, err
 	}
 }
 
+// ResetInbox navigates back to the messaging inbox and waits until it is ready.
+// Used after failed opens/exports so the next attempt can click list rows again.
+func (s *Session) ResetInbox() error {
+	if err := s.CheckSessionHealthy(); err != nil {
+		return err
+	}
+	if err := s.NavigateMessaging(); err != nil {
+		return err
+	}
+	if err := s.WaitForInbox(20 * time.Second); err != nil {
+		return err
+	}
+	HumanPause(400*time.Millisecond, 900*time.Millisecond)
+	return s.CheckSessionHealthy()
+}
+
+// EnsureMessaging reloads the inbox when the current page is not LinkedIn messaging.
+func (s *Session) EnsureMessaging() error {
+	var pageURL string
+	if err := chromedp.Run(s.ctx, chromedp.Location(&pageURL)); err != nil {
+		return err
+	}
+	low := strings.ToLower(pageURL)
+	if strings.Contains(low, "linkedin.com") && strings.Contains(low, "/messaging") {
+		return nil
+	}
+	return s.ResetInbox()
+}
+
 // OpenConversation opens a conversation by thread URL when available, otherwise
 // a bounded click-in-list fallback (no inbox re-pagination).
 func (s *Session) OpenConversation(c Conversation) (bool, error) {
@@ -415,33 +445,64 @@ func (s *Session) OpenConversation(c Conversation) (bool, error) {
 		return false, err
 	}
 
-	href := strings.TrimSpace(c.HrefStr())
-	opened := false
-	var err error
-
-	if href != "" {
-		opened, err = s.openByHref(href)
-	} else {
-		opened, err = s.openByListClick(c)
+	waitThread := func() error {
+		HumanPause(800*time.Millisecond, 1500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+		defer cancel()
+		err := chromedp.Run(ctx,
+			chromedp.WaitVisible(`.msg-thread .msg-s-message-list, .msg-s-event-listitem`, chromedp.ByQuery),
+		)
+		if err != nil {
+			if challengeErr := s.CheckSessionHealthy(); challengeErr != nil {
+				return challengeErr
+			}
+			return err
+		}
+		return nil
 	}
+
+	href := strings.TrimSpace(c.HrefStr())
+	if href != "" {
+		opened, err := s.openByHref(href)
+		if err != nil {
+			// Navigation failed — reset and try list click.
+			if resetErr := s.ResetInbox(); resetErr != nil {
+				return false, err
+			}
+			opened, err = s.openByListClick(c)
+			if err != nil {
+				return false, err
+			}
+			if !opened {
+				return false, nil
+			}
+			if err := waitThread(); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		if opened {
+			if err := waitThread(); err == nil {
+				return true, nil
+			} else if errors.Is(err, ErrSessionChallenge) {
+				return false, err
+			}
+			// Thread did not paint — reset inbox and fall through to list click.
+			if resetErr := s.ResetInbox(); resetErr != nil {
+				return false, err
+			}
+		}
+		// opened == false (href not a thread URL) or wait failed: list click.
+	}
+
+	opened, err := s.openByListClick(c)
 	if err != nil {
 		return false, err
 	}
 	if !opened {
 		return false, nil
 	}
-
-	HumanPause(800*time.Millisecond, 1500*time.Millisecond)
-
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
-	defer cancel()
-	err = chromedp.Run(ctx,
-		chromedp.WaitVisible(`.msg-thread .msg-s-message-list, .msg-s-event-listitem`, chromedp.ByQuery),
-	)
-	if err != nil {
-		if challengeErr := s.CheckSessionHealthy(); challengeErr != nil {
-			return false, challengeErr
-		}
+	if err := waitThread(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -593,6 +654,8 @@ func (s *Session) ExportOpenThread(downloadDir string, onProgress ...func(Export
 	if err := s.printHTMLToPDF(htmlDoc, person, outPath); err != nil {
 		return "", nil, err
 	}
+	// PDF print uses a separate tab; if the main page somehow left messaging, recover.
+	_ = s.EnsureMessaging()
 	return outPath, &data, nil
 }
 

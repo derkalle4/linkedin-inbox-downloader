@@ -404,6 +404,7 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 	total := len(rows)
 	r.program.Send(ui.BackupStartMsg{Total: total})
 	saved := 0
+	var failed []browser.Conversation
 
 	send := func(done int, name, sub, subDetail string, subCur, subTot int, indeterminate bool, phaseFrac float64, errMsg string) {
 		pct := 0
@@ -429,17 +430,9 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 	}
 
 	const threadPhases = 5 // open + load + extract + build + save
-	for i, c := range rows {
-		select {
-		case <-ctx.Done():
-			r.publishCachedList()
-			r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
-			return
-		default:
-		}
-
+	runOne := func(c browser.Conversation, progressDone int) bool {
 		name := c.NameStr()
-		send(i, name, "Opening conversation", "", 1, threadPhases, false, 0, "")
+		send(progressDone, name, "Opening conversation", "", 1, threadPhases, false, 0, "")
 
 		res := backupOne(r.session, c, r.download, r.st, func(p browser.ExportProgress) {
 			step := p.PhaseStep + 1 // 0 (open) → 1; 1..4 → 2..5
@@ -455,27 +448,71 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 				phaseFrac = (1.0 + loadFrac) / float64(threadPhases)
 			}
 			if p.MsgCount > 0 {
-				send(i, name, p.Phase, "", p.MsgCount, 0, true, phaseFrac, "")
+				send(progressDone, name, p.Phase, "", p.MsgCount, 0, true, phaseFrac, "")
 				return
 			}
-			send(i, name, p.Phase, "", step, threadPhases, false, phaseFrac, "")
+			send(progressDone, name, p.Phase, "", step, threadPhases, false, phaseFrac, "")
 		})
 		if res.Err != nil {
 			if errors.Is(res.Err, browser.ErrSessionChallenge) {
 				r.fatal(res.Err)
+				return false // abort
+			}
+			send(progressDone, name, "Failed", "", 0, threadPhases, false, 0, res.Err.Error())
+			browser.BetweenConversations()
+			failed = append(failed, c)
+			return true
+		}
+		saved++
+		send(progressDone+1, name, "Saving PDF", filepath.Base(res.OutPath), threadPhases, threadPhases, false, 1, "")
+		browser.BetweenConversations()
+		return true
+	}
+
+	for i, c := range rows {
+		select {
+		case <-ctx.Done():
+			r.publishCachedList()
+			r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
+			return
+		default:
+		}
+		if !runOne(c, i) {
+			r.publishCachedList()
+			return
+		}
+	}
+
+	// Second pass: retry conversations that failed in the first pass.
+	if len(failed) > 0 {
+		_ = r.session.ResetInbox()
+		retry := failed
+		failed = nil
+		for i, c := range retry {
+			select {
+			case <-ctx.Done():
+				r.publishCachedList()
+				r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
+				return
+			default:
+			}
+			doneBase := total - len(retry) + i
+			if doneBase < saved {
+				doneBase = saved
+			}
+			if !runOne(c, doneBase) {
 				r.publishCachedList()
 				return
 			}
-			send(i, name, "Failed", "", 0, threadPhases, false, 0, res.Err.Error())
-			browser.BetweenConversations()
-			continue
 		}
-		saved++
-		send(i+1, name, "Saving PDF", filepath.Base(res.OutPath), threadPhases, threadPhases, false, 1, "")
-		browser.BetweenConversations()
+	}
+
+	flash := fmt.Sprintf("Saved %d PDF(s)", saved)
+	if n := len(failed); n > 0 {
+		flash = fmt.Sprintf("Saved %d PDF(s), %d failed", saved, n)
 	}
 
 	// Update backed-up flags from local state — do not re-fetch LinkedIn.
 	r.publishCachedList()
-	r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Saved %d PDF(s)", saved)})
+	r.program.Send(ui.BackupDoneMsg{Flash: flash})
 }
