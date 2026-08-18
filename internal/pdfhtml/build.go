@@ -98,7 +98,7 @@ func Build(data Thread, shortThreadID string) string {
 			nMsg++
 		}
 	}
-	exported := time.Now().Format("02 Jan 2006 · 15:04")
+	startedLabel := data.StartedAt(time.Now()).Format("02 Jan 2006 · 15:04")
 
 	var chips strings.Builder
 	if deg := strings.TrimLeft(strings.TrimSpace(data.Degree), "·• \t"); deg != "" {
@@ -133,7 +133,7 @@ func Build(data Thread, shortThreadID string) string {
 	parts.WriteString("</td></tr></thead><tbody><tr><td>")
 	parts.WriteString("<header class='hero'>")
 	parts.WriteString("<div class='hero-top'><span>LinkedIn conversation</span>")
-	parts.WriteString("<span>" + html.EscapeString(exported) + "</span></div>")
+	parts.WriteString("<span>" + html.EscapeString(startedLabel) + "</span></div>")
 	parts.WriteString("<div class='hero-card'>")
 	parts.WriteString(avatarHTML(data.Photo, name, "avatar"))
 	parts.WriteString("<div class='identity'>")

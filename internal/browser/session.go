@@ -28,8 +28,8 @@ import (
 const MessagingURL = "https://www.linkedin.com/messaging/"
 
 var (
-	threadRE     = regexp.MustCompile(`(?i)/messaging/thread/([^/?#]+)`)
-	challengeRE  = regexp.MustCompile(`(?i)/(checkpoint|challenge|authwall)(/|$|\?)`)
+	threadRE    = regexp.MustCompile(`(?i)/messaging/thread/([^/?#]+)`)
+	challengeRE = regexp.MustCompile(`(?i)/(checkpoint|challenge|authwall)(/|$|\?)`)
 )
 
 // Conversation is one inbox row.
@@ -586,7 +586,7 @@ func (s *Session) ExportOpenThread(downloadDir string, onProgress ...func(Export
 	if _, err := export.RotateExisting(downloadDir, tid); err != nil {
 		return "", nil, err
 	}
-	outName := export.PDFName(tid, person, time.Now())
+	outName := export.PDFName(tid, person, data.StartedAt(time.Now()))
 	outPath := filepath.Join(downloadDir, outName)
 
 	report(ExportProgress{Phase: "Saving PDF", PhaseStep: 4, PhaseCount: ExportPhaseCount})
