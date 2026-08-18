@@ -25,7 +25,7 @@ This is unpaid side work. If it saved you a thread (or a headache), [buy me a co
 
 ## Why this exists
 
-Your LinkedIn inbox is career IP - not just “messages.” This tool opens Messaging (you log in once in a normal browser window), lists every conversation, and shows what’s already backed up.
+Your LinkedIn inbox is career IP - not just *messages*. This tool opens Messaging (you log in once in a normal browser window), lists every conversation, and shows what’s already backed up.
 
 - **Your inbox is career IP** - offers, intros, and deal threads deserve a local copy
 - **Incremental backups** - **Backed up** means the thread still matches your last PDF; **Not backed up** means never saved, or there’s a **new message** since then
@@ -150,6 +150,11 @@ That includes LinkedIn account restrictions, lost or corrupted data, missed mess
 - Bump the `VERSION` file on `main` to cut a release (GitHub Actions builds Windows + Linux binaries and publishes a release with commits since the last tag).
 - Local builds (Docker only, no host Go): `make` (help), `make prod`, `make debug`.
 
+</details>
+
+<details>
+<summary><strong>Just to make sure...</strong></summary>
+This is NOT a serious project. I thought the text above made this clear enough. Anyway, it works (somewhat) and does not steal your credentials :D
 </details>
 
 ---
