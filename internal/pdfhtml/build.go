@@ -207,7 +207,8 @@ const css = `
     --run-block: 114px;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  @page { size: A4; margin: 0; }
+  html, body { margin: 0; padding: 0; max-width: 100%; overflow-x: hidden; }
   body {
     font-family: "DM Sans", "Segoe UI", Helvetica, Arial, sans-serif;
     color: var(--ink);
@@ -218,7 +219,7 @@ const css = `
     print-color-adjust: exact;
   }
   .sheet {
-    width: 100%; border-collapse: collapse; border-spacing: 0;
+    table-layout: fixed; width: 100%; border-collapse: collapse; border-spacing: 0;
   }
   .sheet > thead > tr > td,
   .sheet > tbody > tr > td {
@@ -267,7 +268,7 @@ const css = `
     font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
     color: rgba(255,255,255,.62); font-weight: 600; margin-bottom: 22px;
   }
-  .hero-card { display: flex; gap: 22px; align-items: center; }
+  .hero-card { display: flex; gap: 22px; align-items: center; min-width: 0; max-width: 100%; }
   .avatar {
     width: 92px; height: 92px; border-radius: 50%; object-fit: cover;
     flex-shrink: 0; border: 3px solid rgba(255,255,255,.88);
@@ -279,12 +280,15 @@ const css = `
   }
   .hero .avatar.fallback { background: rgba(255,255,255,.14); color: #fff; font-size: 28px;
     font-family: Fraunces, Georgia, serif; }
-  .identity { min-width: 0; }
+  .identity { flex: 1; min-width: 0; }
   h1 {
     font-family: Fraunces, Georgia, serif; font-size: 30px; font-weight: 650;
     line-height: 1.15; margin: 0 0 8px; letter-spacing: -.02em;
   }
-  .headline { margin: 0 0 12px; color: rgba(255,255,255,.86); font-size: 14px; font-weight: 400; }
+  .headline {
+    margin: 0 0 12px; color: rgba(255,255,255,.86); font-size: 14px; font-weight: 400;
+    white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+  }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .chip {
     display: inline-block; padding: 4px 10px; border-radius: 999px;

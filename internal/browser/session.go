@@ -692,6 +692,7 @@ func (s *Session) printHTMLToPDF(htmlDoc, person, outPath string) error {
 			buf, _, err := page.PrintToPDF().
 				WithPrintBackground(true).
 				WithPreferCSSPageSize(true).
+				WithScale(1).
 				WithDisplayHeaderFooter(true).
 				WithHeaderTemplate("<div></div>").
 				WithFooterTemplate(footer).
