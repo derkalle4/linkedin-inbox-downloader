@@ -81,7 +81,7 @@ func sanitizeFragment(fragment string) string {
 
 func avatarHTML(src, label, class string) string {
 	if src != "" {
-		return fmt.Sprintf(`<img class='%s' src='%s' alt=''>`, class, html.EscapeString(src))
+		return fmt.Sprintf(`<div class='%s' style='background-image:url("%s")'></div>`, class, html.EscapeString(src))
 	}
 	return fmt.Sprintf(`<div class='%s fallback'>%s</div>`, class, html.EscapeString(initials(label)))
 }
@@ -234,8 +234,9 @@ const css = `
     display: flex; gap: 12px; align-items: center; min-width: 0;
   }
   .run-pic {
-    width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
-    flex-shrink: 0; border: 2px solid rgba(255,255,255,.88); background: #ddd6c8;
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,.88); background: #ddd6c8;
+    background-size: cover; background-position: center; background-repeat: no-repeat;
   }
   .run-pic.fallback {
     display: flex; align-items: center; justify-content: center;
@@ -270,9 +271,10 @@ const css = `
   }
   .hero-card { display: flex; gap: 22px; align-items: center; min-width: 0; max-width: 100%; }
   .avatar {
-    width: 92px; height: 92px; border-radius: 50%; object-fit: cover;
+    width: 92px; height: 92px; border-radius: 50%;
     flex-shrink: 0; border: 3px solid rgba(255,255,255,.88);
     box-shadow: 0 10px 30px rgba(0,0,0,.28);
+    background-size: cover; background-position: center; background-repeat: no-repeat;
   }
   .avatar.fallback, .sender-pic.fallback {
     display: flex; align-items: center; justify-content: center;
@@ -318,8 +320,9 @@ const css = `
   .msg.self { padding-left: 0; padding-right: 46px; }
   .sender-pic {
     position: absolute; left: 0; top: 18px;
-    width: 34px; height: 34px; border-radius: 50%; object-fit: cover;
+    width: 34px; height: 34px; border-radius: 50%;
     background: #d8dde3;
+    background-size: cover; background-position: center; background-repeat: no-repeat;
   }
   .msg.self .sender-pic { left: auto; right: 0; }
   .msg-body { min-width: 0; max-width: 86%; }

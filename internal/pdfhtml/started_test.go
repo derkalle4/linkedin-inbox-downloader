@@ -52,3 +52,33 @@ func TestBuildUsesConversationDate(t *testing.T) {
 		t.Fatal("HTML missing conversation start")
 	}
 }
+
+func TestBuildAvatarUsesPhotoNotInitials(t *testing.T) {
+	html := Build(Thread{
+		Name:  "Ada Lovelace",
+		Photo: "data:image/jpeg;base64,abc",
+		Items: []Item{{Type: "msg", Sender: "Ada Lovelace", SenderPhoto: "data:image/jpeg;base64,abc", Text: "hi"}},
+	}, "abc")
+	if strings.Contains(html, "AL") && strings.Contains(html, "fallback") {
+		t.Fatal("expected photo, not initials fallback")
+	}
+	if !strings.Contains(html, `class='avatar' style='background-image:url("data:image/jpeg;base64,abc")'`) {
+		t.Fatal("header avatar missing")
+	}
+	if !strings.Contains(html, `class='sender-pic' style='background-image:url("data:image/jpeg;base64,abc")'`) {
+		t.Fatal("message avatar missing")
+	}
+}
+
+func TestBuildAvatarFallsBackToInitials(t *testing.T) {
+	html := Build(Thread{
+		Name:  "Ada Lovelace",
+		Items: []Item{{Type: "msg", Sender: "Ada Lovelace", Text: "hi"}},
+	}, "abc")
+	if !strings.Contains(html, "fallback") {
+		t.Fatal("expected initials fallback when photo is missing")
+	}
+	if !strings.Contains(html, "AL") {
+		t.Fatal("expected initials AL")
+	}
+}

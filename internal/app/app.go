@@ -172,7 +172,9 @@ func (r *Runner) loop(ctx context.Context) {
 			case ui.ReloadMsg:
 				r.loadList()
 			case ui.BackupRequestMsg:
-				r.BackupConversations(ctx, m.Convos)
+				if r.runBackup(ctx, m.Convos) {
+					return
+				}
 			case ui.PathEditSubmitMsg:
 				r.changePath(m.Path)
 			case ui.DeclinedMsg:
@@ -399,6 +401,45 @@ func (r *Runner) changePath(path string) {
 	r.publishCachedList()
 }
 
+// runBackup exports conversations. Returns true when the app should exit
+// (parent context cancelled or disclaimer declined). "q" during backup
+// cancels the job and returns to the inbox.
+func (r *Runner) runBackup(ctx context.Context, convos []browser.Conversation) bool {
+	r.program.Send(ui.BackupStartMsg{Total: len(convos)})
+	backupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		restore := r.session.SetOpContext(backupCtx)
+		defer restore()
+		r.BackupConversations(backupCtx, convos)
+	}()
+	for {
+		select {
+		case <-done:
+			if backupCtx.Err() != nil && ctx.Err() == nil {
+				_ = r.session.ResetInbox()
+			}
+			return false
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return true
+		case msg := <-ui.ActionBus:
+			switch msg.(type) {
+			case ui.BackupCancelMsg:
+				cancel()
+			case ui.DeclinedMsg:
+				cancel()
+				<-done
+				_ = config.WipeSession()
+				return true
+			}
+		}
+	}
+}
+
 // BackupConversations exports the given conversation rows.
 func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Conversation) {
 	total := len(rows)
@@ -454,6 +495,9 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 			send(progressDone, name, p.Phase, "", step, threadPhases, false, phaseFrac, "")
 		})
 		if res.Err != nil {
+			if ctx.Err() != nil || errors.Is(res.Err, context.Canceled) {
+				return false
+			}
 			if errors.Is(res.Err, browser.ErrSessionChallenge) {
 				r.fatal(res.Err)
 				return false // abort
@@ -469,30 +513,45 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 		return true
 	}
 
+	finishCancel := func() {
+		r.publishCachedList()
+		r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
+	}
+
 	for i, c := range rows {
 		select {
 		case <-ctx.Done():
-			r.publishCachedList()
-			r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
+			finishCancel()
 			return
 		default:
 		}
 		if !runOne(c, i) {
+			if ctx.Err() != nil {
+				finishCancel()
+				return
+			}
 			r.publishCachedList()
+			return
+		}
+		if ctx.Err() != nil {
+			finishCancel()
 			return
 		}
 	}
 
 	// Second pass: retry conversations that failed in the first pass.
 	if len(failed) > 0 {
+		if ctx.Err() != nil {
+			finishCancel()
+			return
+		}
 		_ = r.session.ResetInbox()
 		retry := failed
 		failed = nil
 		for i, c := range retry {
 			select {
 			case <-ctx.Done():
-				r.publishCachedList()
-				r.program.Send(ui.BackupDoneMsg{Flash: fmt.Sprintf("Cancelled — saved %d PDF(s)", saved)})
+				finishCancel()
 				return
 			default:
 			}
@@ -501,7 +560,15 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 				doneBase = saved
 			}
 			if !runOne(c, doneBase) {
+				if ctx.Err() != nil {
+					finishCancel()
+					return
+				}
 				r.publishCachedList()
+				return
+			}
+			if ctx.Err() != nil {
+				finishCancel()
 				return
 			}
 		}

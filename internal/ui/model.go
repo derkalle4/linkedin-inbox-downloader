@@ -199,6 +199,7 @@ type AcceptedMsg struct{}
 type DeclinedMsg struct{}
 type ReloadMsg struct{}
 type BackupRequestMsg struct{ Convos []browser.Conversation }
+type BackupCancelMsg struct{}
 type PathEditSubmitMsg struct{ Path string }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -376,10 +377,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-	case ScreenLoginWait, ScreenConnecting, ScreenBackup:
+	case ScreenLoginWait, ScreenConnecting:
 		if key == "ctrl+c" || key == "q" {
 			m.Quit = true
 			return m, tea.Quit
+		}
+
+	case ScreenBackup:
+		if key == "ctrl+c" {
+			m.Quit = true
+			return m, tea.Quit
+		}
+		if key == "q" || key == "esc" {
+			m.BackupCurrent = "Cancelling…"
+			m.LoadStatus = "Cancelling…"
+			return m, emit(BackupCancelMsg{})
 		}
 
 	case ScreenPathEdit:
@@ -618,7 +630,7 @@ func (m Model) viewBackup() string {
 		b.WriteString("\n" + styleError.Render("Last error") + "\n")
 		b.WriteString(styleMuted.Render(wrapWords(m.BackupError, m.boxInnerWidth())) + "\n")
 	}
-	b.WriteString("\n" + renderHelp([]helpItem{{"q", "abort"}}, m.helpWidth()))
+	b.WriteString("\n" + renderHelp([]helpItem{{"q", "back"}}, m.helpWidth()))
 	return lipgloss.Place(max(m.Width, 40), max(m.Height, 12), lipgloss.Center, lipgloss.Center, styleBox.Render(b.String()))
 }
 

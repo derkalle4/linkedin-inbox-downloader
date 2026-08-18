@@ -3,7 +3,6 @@ package browser
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -56,9 +56,49 @@ type Session struct {
 	allocCancel context.CancelFunc
 	ctx         context.Context
 	cancel      context.CancelFunc
+	opMu        sync.Mutex
+	opCtx       context.Context // optional child of ctx; used to abort an in-flight backup
 	profile     string
 	headless    bool
 	userAgent   string
+}
+
+// SetOpContext binds a cancellable child of the browser context for in-flight
+// work (backup). The returned restore function clears it. parent is the
+// caller's cancel signal (not a chromedp context); cancelling it aborts page
+// operations without closing the browser.
+func (s *Session) SetOpContext(parent context.Context) func() {
+	if s == nil {
+		return func() {}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	stop := context.AfterFunc(parent, cancel)
+	s.opMu.Lock()
+	prev := s.opCtx
+	s.opCtx = ctx
+	s.opMu.Unlock()
+	return func() {
+		stop()
+		cancel()
+		s.opMu.Lock()
+		s.opCtx = prev
+		s.opMu.Unlock()
+	}
+}
+
+func (s *Session) runCtx() context.Context {
+	if s == nil {
+		return context.Background()
+	}
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if s.opCtx != nil {
+		return s.opCtx
+	}
+	return s.ctx
 }
 
 // Options configures a browser session.
@@ -134,7 +174,7 @@ func Start(opts Options) (*Session, error) {
 
 func (s *Session) applyStealth() error {
 	ua := stripHeadlessChrome(s.userAgent)
-	return chromedp.Run(s.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	return chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
 		if err := emulation.SetUserAgentOverride(ua).Do(ctx); err != nil {
 			return err
 		}
@@ -166,7 +206,7 @@ func (s *Session) Context() context.Context {
 }
 
 func (s *Session) applyCookies(cookies []Cookie) error {
-	return chromedp.Run(s.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	return chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
 		for _, c := range FilterLive(cookies) {
 			expr := cdp.TimeSinceEpoch(time.Unix(int64(c.Expires), 0))
 			p := network.SetCookie(c.Name, c.Value).
@@ -195,12 +235,12 @@ func (s *Session) applyCookies(cookies []Cookie) error {
 
 // NavigateMessaging opens the LinkedIn messaging inbox.
 func (s *Session) NavigateMessaging() error {
-	return chromedp.Run(s.ctx, chromedp.Navigate(MessagingURL))
+	return chromedp.Run(s.runCtx(), chromedp.Navigate(MessagingURL))
 }
 
 // WaitForInbox waits until the messaging UI appears (or timeout).
 func (s *Session) WaitForInbox(timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(s.ctx, timeout)
+	ctx, cancel := context.WithTimeout(s.runCtx(), timeout)
 	defer cancel()
 	sel := `.msg-conversations-container__conversations-list, .msg-thread, .msg-title-bar`
 	return chromedp.Run(ctx, chromedp.WaitVisible(sel, chromedp.ByQuery))
@@ -208,7 +248,7 @@ func (s *Session) WaitForInbox(timeout time.Duration) error {
 
 // InboxReady quickly checks whether the inbox UI is already visible.
 func (s *Session) InboxReady() bool {
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(s.runCtx(), 5*time.Second)
 	defer cancel()
 	var ok bool
 	err := chromedp.Run(ctx, chromedp.Evaluate(`!!(
@@ -226,7 +266,7 @@ var ErrSessionChallenge = fmt.Errorf("linkedin session challenge or auth wall")
 // a checkpoint, challenge, or authwall page.
 func (s *Session) CheckSessionHealthy() error {
 	var pageURL string
-	if err := chromedp.Run(s.ctx, chromedp.Location(&pageURL)); err != nil {
+	if err := chromedp.Run(s.runCtx(), chromedp.Location(&pageURL)); err != nil {
 		return err
 	}
 	if challengeRE.MatchString(pageURL) {
@@ -238,7 +278,7 @@ func (s *Session) CheckSessionHealthy() error {
 // DumpCookies saves all cookies for linkedin.com domains.
 func (s *Session) DumpCookies() error {
 	var cookies []*network.Cookie
-	err := chromedp.Run(s.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
 		cookies, err = network.GetCookies().Do(ctx)
 		return err
@@ -310,7 +350,7 @@ func (s *Session) ListConversations(onProgress ...func(ListProgress)) ([]Convers
 	}
 	deadline := time.Now().Add(listJobTimeout)
 	for {
-		if err := s.ctx.Err(); err != nil {
+		if err := s.runCtx().Err(); err != nil {
 			return nil, err
 		}
 		if time.Now().After(deadline) {
@@ -340,7 +380,7 @@ func (s *Session) ListConversations(onProgress ...func(ListProgress)) ([]Convers
 
 func (s *Session) startLidJob(js string) error {
 	var ok bool
-	if err := chromedp.Run(s.ctx, chromedp.Evaluate(fmt.Sprintf("(%s)()", js), &ok)); err != nil {
+	if err := chromedp.Run(s.runCtx(), chromedp.Evaluate(fmt.Sprintf("(%s)()", js), &ok)); err != nil {
 		return err
 	}
 	if !ok {
@@ -385,7 +425,7 @@ func (s *Session) LoadMessageHistory(onProgress ...func(LoadProgress)) (int, err
 	}
 	deadline := time.Now().Add(loadJobTimeout)
 	for {
-		if err := s.ctx.Err(); err != nil {
+		if err := s.runCtx().Err(); err != nil {
 			return 0, err
 		}
 		if time.Now().After(deadline) {
@@ -428,7 +468,7 @@ func (s *Session) ResetInbox() error {
 // EnsureMessaging reloads the inbox when the current page is not LinkedIn messaging.
 func (s *Session) EnsureMessaging() error {
 	var pageURL string
-	if err := chromedp.Run(s.ctx, chromedp.Location(&pageURL)); err != nil {
+	if err := chromedp.Run(s.runCtx(), chromedp.Location(&pageURL)); err != nil {
 		return err
 	}
 	low := strings.ToLower(pageURL)
@@ -447,7 +487,7 @@ func (s *Session) OpenConversation(c Conversation) (bool, error) {
 
 	waitThread := func() error {
 		HumanPause(800*time.Millisecond, 1500*time.Millisecond)
-		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(s.runCtx(), 30*time.Second)
 		defer cancel()
 		err := chromedp.Run(ctx,
 			chromedp.WaitVisible(`.msg-thread .msg-s-message-list, .msg-s-event-listitem`, chromedp.ByQuery),
@@ -521,7 +561,7 @@ func (s *Session) openByHref(href string) (bool, error) {
 	if !strings.Contains(strings.ToLower(target), "/messaging/thread/") {
 		return false, nil
 	}
-	if err := chromedp.Run(s.ctx, chromedp.Navigate(target)); err != nil {
+	if err := chromedp.Run(s.runCtx(), chromedp.Navigate(target)); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -539,7 +579,7 @@ func (s *Session) openByListClick(c Conversation) (bool, error) {
 	}
 	js := fmt.Sprintf("(%s)(%s)", embedjs.OpenJS, string(payload))
 	var ok bool
-	err = chromedp.Run(s.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err = chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
 		res, exception, err := runtime.Evaluate(js).
 			WithAwaitPromise(true).
 			WithReturnByValue(true).
@@ -622,6 +662,7 @@ func (s *Session) ExportOpenThread(downloadDir string, downloadImages bool, onPr
 	if err != nil {
 		return "", nil, fmt.Errorf("extract decode: %w", err)
 	}
+	s.embedThreadImages(&data)
 
 	hasMsg := false
 	for _, i := range data.Items {
@@ -637,7 +678,7 @@ func (s *Session) ExportOpenThread(downloadDir string, downloadImages bool, onPr
 	tid := ThreadIDFromURL(data.URL)
 	if tid == "" {
 		var pageURL string
-		_ = chromedp.Run(s.ctx, chromedp.Location(&pageURL))
+		_ = chromedp.Run(s.runCtx(), chromedp.Location(&pageURL))
 		tid = ThreadIDFromURL(pageURL)
 	}
 	person := data.Name
@@ -673,10 +714,9 @@ func (s *Session) ExportOpenThread(downloadDir string, downloadImages bool, onPr
 
 func (s *Session) printHTMLToPDF(htmlDoc, person, outPath string) error {
 	// Use a separate tab so we do not leave the messaging inbox page.
-	tabCtx, cancel := chromedp.NewContext(s.ctx)
+	tabCtx, cancel := chromedp.NewContext(s.runCtx())
 	defer cancel()
 
-	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(htmlDoc))
 	footer := fmt.Sprintf(
 		`<div style="font-size:9px;color:#7a8490;width:100%%;padding:0 14mm;font-family:DM Sans,Segoe UI,sans-serif;display:flex;justify-content:space-between;align-items:center;"><span>Conversation with %s</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`,
 		html.EscapeString(person),
@@ -684,10 +724,31 @@ func (s *Session) printHTMLToPDF(htmlDoc, person, outPath string) error {
 
 	var pdfBuf []byte
 	err := chromedp.Run(tabCtx,
-		chromedp.Navigate(dataURL),
+		chromedp.Navigate("about:blank"),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			tree, err := page.GetResourceTree().Do(ctx)
+			if err != nil {
+				return err
+			}
+			if tree == nil || tree.Frame == nil {
+				return fmt.Errorf("print tab: no frame")
+			}
+			return page.SetDocumentContent(tree.Frame.ID, htmlDoc).Do(ctx)
+		}),
 		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.Evaluate(`document.fonts ? document.fonts.ready : Promise.resolve()`, nil),
-		chromedp.Sleep(400*time.Millisecond),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, exception, err := runtime.Evaluate(waitPrintImagesJS).
+				WithAwaitPromise(true).
+				WithReturnByValue(true).
+				Do(ctx)
+			if err != nil {
+				return err
+			}
+			if exception != nil {
+				return exception
+			}
+			return nil
+		}),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			buf, _, err := page.PrintToPDF().
 				WithPrintBackground(true).
@@ -754,7 +815,7 @@ func (s *Session) evalJSONString(expression string) ([]byte, error) {
 	})()`, expression)
 
 	var encoded string
-	err := chromedp.Run(s.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
 		res, exception, err := runtime.Evaluate(expr).
 			WithAwaitPromise(true).
 			WithReturnByValue(true).

@@ -47,17 +47,34 @@
       }
       box.scrollTop = box.scrollHeight;
       await sleep(jitter(200, 400));
-      // Pass through the thread so lazy / GhostImage avatars actually load.
+      // Swap GhostImage placeholders for the real CDN URL (attributes only).
+      const reveal = (img) => {
+        if (!img) return;
+        img.loading = 'eager';
+        img.removeAttribute('loading');
+        const url = [
+          img.getAttribute('data-delayed-url'),
+          img.getAttribute('data-ghost-url'),
+          img.getAttribute('data-src'),
+          img.dataset?.delayedUrl,
+          img.dataset?.ghostUrl,
+        ].find((u) => u && !u.startsWith('data:'));
+        if (url && img.src !== url) img.src = url;
+      };
       const events = [...box.querySelectorAll('li.msg-s-message-list__event')];
       const step = Math.max(1, Math.floor(events.length / 24));
       for (let i = 0; i < events.length; i += step) {
         try {
           events[i].scrollIntoView({ block: 'center' });
         } catch (e) {}
+        events[i].querySelectorAll('img.msg-s-event-listitem__profile-picture, img.presence-entity__image, img.evi-image')
+          .forEach(reveal);
         await sleep(jitter(40, 90));
       }
+      document.querySelectorAll('.msg-s-profile-card img, img.msg-s-event-listitem__profile-picture')
+        .forEach(reveal);
       box.scrollTop = box.scrollHeight;
-      await sleep(jitter(200, 500));
+      await sleep(jitter(400, 800));
       job.count = Math.max(0, last);
       job.result = last;
       job.done = true;
