@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: auto
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Read version
+        id: ver
+        run: |
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$'; then
+            echo "Invalid VERSION: $VERSION"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: "0"
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X github.com/derkalle4/linkedin-inbox-downloader/internal/version.Version=${VERSION}"
+          build() {
+            local goos="$1" goarch="$2" out="$3"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
+              -ldflags "$LDFLAGS" -o "dist/$out" ./cmd/linkedin-inbox-downloader
+          }
+          build windows amd64 linkedin-inbox-downloader-windows-amd64.exe
+          build linux   amd64 linkedin-inbox-downloader-linux-amd64
+          build linux   arm64 linkedin-inbox-downloader-linux-arm64
+          ls -la dist
+
+      - name: Build changelog
+        id: notes
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          {
+            echo "## What's changed"
+            echo
+            if [ -n "$PREV" ]; then
+              git log --pretty=format:'- %s (%h)' "${PREV}..HEAD"
+              echo
+              echo
+              echo "**Full range:** ${PREV}..${TAG}"
+            else
+              git log --pretty=format:'- %s (%h)'
+              echo
+              echo
+              echo "_First release._"
+            fi
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --notes-file RELEASE_NOTES.md \
+            dist/linkedin-inbox-downloader-windows-amd64.exe \
+            dist/linkedin-inbox-downloader-linux-amd64 \
+            dist/linkedin-inbox-downloader-linux-arm64

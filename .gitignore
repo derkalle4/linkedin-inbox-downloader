@@ -1,0 +1,20 @@
+# PDFs and backup state when download_path is the default archive/
+/archive/
+
+# Session / config written next to the executable
+/config.yaml
+/linkedin_cookies.json
+
+# Local Docker builds
+/bin/
+/dist/
+/.cache/
+
+# Accidental binaries in the repo root
+/linkedin-inbox-downloader
+/linkedin-inbox-downloader.exe
+*.exe
+
+# OS junk
+.DS_Store
+Thumbs.db

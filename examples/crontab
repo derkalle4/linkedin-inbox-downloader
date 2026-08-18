@@ -1,0 +1,15 @@
+# Example crontab for LinkedIn Inbox Downloader (--headless).
+#
+# Setup:
+#   1. Put the binary, config.yaml, and linkedin_cookies.json in one folder
+#      (e.g. /opt/linkedin-inbox-downloader/). Create them by running the
+#      interactive UI once first.
+#   2. Edit the paths below to match your install directory.
+#   3. Install with: crontab -e  (paste the PATH line and the schedule line)
+#
+# flock -n skips a run if the previous one is still going.
+# Output is appended to headless.log next to the binary.
+
+PATH=/usr/local/bin:/usr/bin:/bin
+
+0 3 * * * flock -n /opt/linkedin-inbox-downloader/run.lock /opt/linkedin-inbox-downloader/linkedin-inbox-downloader --headless >> /opt/linkedin-inbox-downloader/headless.log 2>&1

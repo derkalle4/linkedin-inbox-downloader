@@ -1,0 +1,10 @@
+# Complete config for LinkedIn Inbox Downloader.
+# Place this file next to the binary as config.yaml
+# (the interactive UI creates it when you accept the disclaimer).
+
+# Must be true for --headless (and for normal use after first launch).
+disclaimer_accepted: true
+
+# Folder for PDF backups. Relative paths are resolved next to the binary.
+# Absolute paths are also allowed.
+download_path: archive
