@@ -576,7 +576,9 @@ type ExportProgress struct {
 const ExportPhaseCount = 4
 
 // ExportOpenThread loads history, extracts messages, and writes a PDF.
-func (s *Session) ExportOpenThread(downloadDir string, onProgress ...func(ExportProgress)) (string, *pdfhtml.Thread, error) {
+// When downloadImages is true, message pictures are also written next to the
+// PDF as {stem}_img_01.jpg (existing files are not overwritten).
+func (s *Session) ExportOpenThread(downloadDir string, downloadImages bool, onProgress ...func(ExportProgress)) (string, *pdfhtml.Thread, error) {
 	var progress func(ExportProgress)
 	if len(onProgress) > 0 {
 		progress = onProgress[0]
@@ -607,6 +609,9 @@ func (s *Session) ExportOpenThread(downloadDir string, onProgress ...func(Export
 	}); err != nil {
 		return "", nil, fmt.Errorf("load messages: %w", err)
 	}
+
+	// Let GhostImage / lazy avatars settle after the scroll pass.
+	HumanPause(500*time.Millisecond, 1200*time.Millisecond)
 
 	report(ExportProgress{Phase: "Extracting messages", PhaseStep: 2, PhaseCount: ExportPhaseCount})
 	raw, err := s.evalJSONString(fmt.Sprintf("(%s)()", embedjs.ExtractJS))
@@ -644,11 +649,18 @@ func (s *Session) ExportOpenThread(downloadDir string, onProgress ...func(Export
 	report(ExportProgress{Phase: "Building PDF", PhaseStep: 3, PhaseCount: ExportPhaseCount})
 	htmlDoc := pdfhtml.Build(data, short)
 
+	outName := export.PDFName(tid, person, data.StartedAt(time.Now()))
+	outPath := filepath.Join(downloadDir, outName)
+
+	if downloadImages {
+		if err := export.WriteSidecarJPEGs(downloadDir, outName, messageImages(data)); err != nil {
+			return "", nil, fmt.Errorf("save images: %w", err)
+		}
+	}
+
 	if _, err := export.RotateExisting(downloadDir, tid); err != nil {
 		return "", nil, err
 	}
-	outName := export.PDFName(tid, person, data.StartedAt(time.Now()))
-	outPath := filepath.Join(downloadDir, outName)
 
 	report(ExportProgress{Phase: "Saving PDF", PhaseStep: 4, PhaseCount: ExportPhaseCount})
 	if err := s.printHTMLToPDF(htmlDoc, person, outPath); err != nil {

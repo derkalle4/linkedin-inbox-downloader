@@ -46,6 +46,18 @@
         await sleep(jitter(40, 120));
       }
       box.scrollTop = box.scrollHeight;
+      await sleep(jitter(200, 400));
+      // Pass through the thread so lazy / GhostImage avatars actually load.
+      const events = [...box.querySelectorAll('li.msg-s-message-list__event')];
+      const step = Math.max(1, Math.floor(events.length / 24));
+      for (let i = 0; i < events.length; i += step) {
+        try {
+          events[i].scrollIntoView({ block: 'center' });
+        } catch (e) {}
+        await sleep(jitter(40, 90));
+      }
+      box.scrollTop = box.scrollHeight;
+      await sleep(jitter(200, 500));
       job.count = Math.max(0, last);
       job.result = last;
       job.done = true;
