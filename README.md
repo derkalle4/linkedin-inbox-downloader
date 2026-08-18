@@ -152,10 +152,10 @@ That includes LinkedIn account restrictions, lost or corrupted data, missed mess
 
 </details>
 
-<details>
 
 ---
 
+<details>
 <summary><strong>Just to make sure...</strong></summary>
 This is NOT a serious project. I thought the text above made this clear enough. Anyway, it works (somewhat) and does not steal your credentials :D
 </details>
