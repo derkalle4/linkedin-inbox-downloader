@@ -434,7 +434,7 @@ func (r *Runner) BackupConversations(ctx context.Context, rows []browser.Convers
 		name := c.NameStr()
 		send(progressDone, name, "Opening conversation", "", 1, threadPhases, false, 0, "")
 
-		res := backupOne(r.session, c, r.download, r.st, func(p browser.ExportProgress) {
+		res := backupOne(r.session, c, r.download, r.st, r.cfg != nil && r.cfg.DownloadImages, func(p browser.ExportProgress) {
 			step := p.PhaseStep + 1 // 0 (open) → 1; 1..4 → 2..5
 			if step < 1 {
 				step = 1

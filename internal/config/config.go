@@ -14,6 +14,9 @@ const DefaultDownloadPath = "archive"
 type Config struct {
 	DisclaimerAccepted bool   `yaml:"disclaimer_accepted"`
 	DownloadPath       string `yaml:"download_path"`
+	// DownloadImages writes message pictures next to each PDF as
+	// {pdf-stem}_img_01.jpg while still embedding them in the PDF.
+	DownloadImages bool `yaml:"download_images"`
 }
 
 // Load reads config.yaml. Returns (nil, nil) if the file does not exist.

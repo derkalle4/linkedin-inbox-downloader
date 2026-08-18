@@ -8,3 +8,9 @@ disclaimer_accepted: true
 # Folder for PDF backups. Relative paths are resolved next to the binary.
 # Absolute paths are also allowed.
 download_path: archive
+
+# Also write message pictures next to each PDF as {pdf-stem}_img_01.jpg,
+# {pdf-stem}_img_02.jpg, … Images stay embedded in the PDF. Existing files
+# are never overwritten; numbering always starts at 01 from the first image
+# in the thread so a new picture in a later message becomes the next index.
+download_images: false

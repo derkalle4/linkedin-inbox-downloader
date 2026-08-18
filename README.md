@@ -62,9 +62,9 @@ Your LinkedIn inbox is career IP - not just “messages.” This tool opens Mess
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | Download folder path + that you accepted the disclaimer |
+| `config.yaml` | Download folder path, optional image sidecars, and that you accepted the disclaimer |
 | `linkedin_cookies.json` | Your LinkedIn session (delete this to log out) |
-| `archive/` | Default folder for PDF backups |
+| `archive/` | Default folder for PDF backups (and `{pdf}_img_01.jpg` sidecars if `download_images` is on) |
 | `archive/backup_state.yaml` | current state of all downloaded PDFs |
 
 ---
@@ -89,7 +89,7 @@ The app drives the browser with Chrome’s modern headless mode (`--headless=new
 Need a nightly backup without UI? Use `--headless`. It only backs up conversations that are **not currently backed up** (never saved, or a new message since the last PDF). It needs an existing config and cookies - it will **not** open a login window.
 
 1. **Run the interactive UI once** next to where you will install the binary: accept the disclaimer and log in. That creates `config.yaml` and `linkedin_cookies.json`.
-2. **Check `config.yaml`** - it should look like [`examples/config.yaml`](examples/config.yaml) (`disclaimer_accepted: true` and a `download_path`).
+2. **Check `config.yaml`** - it should look like [`examples/config.yaml`](examples/config.yaml) (`disclaimer_accepted: true` and a `download_path`). Set `download_images: true` if you also want `{pdf-stem}_img_01.jpg` sidecar files next to each PDF (images stay embedded either way).
 3. **Install a crontab** - see [`examples/crontab`](examples/crontab). Put the binary, config, cookies, and log in one folder, then:
 
    ```bash

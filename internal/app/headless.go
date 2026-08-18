@@ -58,7 +58,7 @@ func RunHeadless() error {
 		applog.Error("download directory: %v", err)
 		return err
 	}
-	applog.Info("config %s download_path=%s", cfgPath, dir)
+	applog.Info("config %s download_path=%s download_images=%v", cfgPath, dir, cfg.DownloadImages)
 	applog.Info("cookies %s", cookiePath)
 
 	st, err := state.Load(dir)
@@ -120,7 +120,7 @@ func RunHeadless() error {
 		name := c.NameStr()
 		applog.Info("backing up (%d/%d) %q…", i+1, len(todo), name)
 
-		res := backupOne(sess, c, dir, st, nil)
+		res := backupOne(sess, c, dir, st, cfg.DownloadImages, nil)
 		if res.Err != nil {
 			if errors.Is(res.Err, browser.ErrSessionChallenge) {
 				applog.Error("session challenge during backup of %q: %v", name, res.Err)
@@ -151,7 +151,7 @@ func RunHeadless() error {
 			}
 			name := c.NameStr()
 			applog.Info("retry (%d/%d) %q…", i+1, len(retry), name)
-			res := backupOne(sess, c, dir, st, nil)
+			res := backupOne(sess, c, dir, st, cfg.DownloadImages, nil)
 			if res.Err != nil {
 				if errors.Is(res.Err, browser.ErrSessionChallenge) {
 					applog.Error("session challenge during retry of %q: %v", name, res.Err)

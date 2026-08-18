@@ -53,3 +53,18 @@ func TestDecodeThreadSoftFields(t *testing.T) {
 		t.Fatalf("unexpected items: %+v", got.Items)
 	}
 }
+
+func TestMessageImagesOrder(t *testing.T) {
+	data, err := decodeThread([]byte(`{"items":[
+		{"type":"day","heading":"Today"},
+		{"type":"msg","images":["one",""]},
+		{"type":"msg","images":["two","three"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := messageImages(data)
+	if len(got) != 3 || got[0] != "one" || got[1] != "two" || got[2] != "three" {
+		t.Fatalf("got %#v", got)
+	}
+}

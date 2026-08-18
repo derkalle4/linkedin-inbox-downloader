@@ -845,6 +845,22 @@ func decodeThread(raw []byte) (pdfhtml.Thread, error) {
 	return out, nil
 }
 
+func messageImages(data pdfhtml.Thread) []string {
+	var images []string
+	for _, item := range data.Items {
+		if item.Type != "msg" {
+			continue
+		}
+		for _, src := range item.Images {
+			if strings.TrimSpace(src) == "" {
+				continue
+			}
+			images = append(images, src)
+		}
+	}
+	return images
+}
+
 func decodeConversations(raw []byte) ([]Conversation, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {

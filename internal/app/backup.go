@@ -27,6 +27,7 @@ func backupOne(
 	c browser.Conversation,
 	dir string,
 	st *state.State,
+	downloadImages bool,
 	onProgress func(browser.ExportProgress),
 ) backupResult {
 	report := func(p browser.ExportProgress) {
@@ -57,7 +58,7 @@ func backupOne(
 			return backupResult{Err: fmt.Errorf("could not open conversation")}
 		}
 
-		outPath, data, err := sess.ExportOpenThread(dir, func(p browser.ExportProgress) {
+		outPath, data, err := sess.ExportOpenThread(dir, downloadImages, func(p browser.ExportProgress) {
 			p.PhaseCount = totalSteps
 			report(p)
 		})
