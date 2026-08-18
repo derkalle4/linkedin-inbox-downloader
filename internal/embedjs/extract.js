@@ -18,11 +18,12 @@ async () => {
     return '';
   };
 
-  // Prefer GhostImage delayed URLs over currentSrc — currentSrc is often still
-  // a tiny placeholder even when naturalWidth looks valid.
   const imgURL = (img) => {
     if (!img) return '';
     const attrs = [
+      img.currentSrc,
+      img.src,
+      img.getAttribute?.('src'),
       img.getAttribute?.('data-delayed-url'),
       img.getAttribute?.('data-ghost-url'),
       img.getAttribute?.('data-src'),
@@ -30,9 +31,6 @@ async () => {
       img.dataset?.delayedUrl,
       img.dataset?.ghostUrl,
       img.dataset?.src,
-      img.currentSrc,
-      img.src,
-      img.getAttribute?.('src'),
     ];
     for (const a of attrs) {
       const s = (a || '').trim();
@@ -59,6 +57,43 @@ async () => {
     return url;
   };
 
+  const toData = async (src) => {
+    if (!src || isPlaceholder(src)) return '';
+    if (src.startsWith('data:')) return src;
+    for (const init of [
+      { credentials: 'include', mode: 'cors', cache: 'force-cache' },
+      { credentials: 'include', mode: 'cors', cache: 'default' },
+      { credentials: 'omit', mode: 'cors', cache: 'force-cache' },
+    ]) {
+      try {
+        const r = await fetch(src, init);
+        if (!r.ok) continue;
+        const buf = await r.arrayBuffer();
+        if (!buf || buf.byteLength < 32) continue;
+        let mime = (r.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+        if (!mime.startsWith('image/')) mime = 'image/jpeg';
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        const step = 0x8000;
+        for (let i = 0; i < bytes.length; i += step) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+        }
+        return `data:${mime};base64,` + btoa(bin);
+      } catch (e) {
+        /* CORS / cache miss — try next, then keep the URL for Chrome */
+      }
+    }
+    return src;
+  };
+
+  const fromImg = async (img) => {
+    const url = reveal(img);
+    try {
+      if (img && img.decode) await img.decode();
+    } catch (e) {}
+    return toData(url);
+  };
+
   const root = document.querySelector('.msg-thread') || document;
   const box = root.querySelector('.msg-s-message-list.scrollable')
     || root.querySelector('.msg-s-message-list')
@@ -80,8 +115,15 @@ async () => {
     events[i].querySelectorAll(PROFILE_SEL + ', img').forEach(reveal);
     if (i % 8 === 0) await sleep(40);
   }
-  root.querySelectorAll(PROFILE_SEL).forEach(reveal);
-  await sleep(150);
+  const profileImgs = [...root.querySelectorAll(PROFILE_SEL)];
+  profileImgs.forEach(reveal);
+  const deadline = Date.now() + 6000;
+  while (Date.now() < deadline) {
+    const pending = profileImgs.filter((img) => !(img.complete && img.naturalWidth > 1));
+    if (pending.length === 0) break;
+    await Promise.all(pending.map((img) => img.decode ? img.decode().catch(() => {}) : sleep(50)));
+    await sleep(80);
+  }
 
   const card = root.querySelector('.msg-s-profile-card');
   const lockup = root.querySelector('.msg-entity-lockup');
@@ -100,7 +142,7 @@ async () => {
   const photoImg = card?.querySelector('img.presence-entity__image, img.evi-image, img')
     || root.querySelector('.msg-s-event-listitem--other img.msg-s-event-listitem__profile-picture')
     || root.querySelector('img.msg-s-event-listitem__profile-picture');
-  const photo = imgURL(photoImg);
+  const photo = await fromImg(photoImg);
 
   const items = [];
   let lastOtherPhoto = photo;
@@ -113,18 +155,20 @@ async () => {
       continue;
     }
     const body = item.querySelector('.msg-s-event-listitem__body, .msg-s-event__content');
-    const images = [...item.querySelectorAll('.msg-s-event-listitem__message-bubble img, .msg-s-event__content img')]
+    const imgUrls = [...item.querySelectorAll('.msg-s-event-listitem__message-bubble img, .msg-s-event__content img')]
       .map((img) => imgURL(img))
       .filter((src) => src && !isPlaceholder(src)
         && !/profile-displayphoto|EntityPhoto|presence-entity|msg-s-event-listitem__profile-picture/.test(src));
     const self = !item.classList.contains('msg-s-event-listitem--other');
-    let senderPhoto = imgURL(item.querySelector('img.msg-s-event-listitem__profile-picture'));
+    let senderPhoto = await fromImg(item.querySelector('img.msg-s-event-listitem__profile-picture'));
     if (senderPhoto) {
       if (self) lastSelfPhoto = senderPhoto;
       else lastOtherPhoto = senderPhoto;
     } else {
       senderPhoto = self ? lastSelfPhoto : lastOtherPhoto;
     }
+    const images = [];
+    for (const u of imgUrls) images.push(await toData(u));
     items.push({
       type: 'msg',
       heading,

@@ -6,12 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	cdpio "github.com/chromedp/cdproto/io"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -20,9 +18,9 @@ import (
 
 const maxImageBytes = 8 << 20 // 8 MiB
 
-// embedThreadImages turns photo URLs into JPEG data URLs so the PDF (printed
-// from about:blank) can render them. LinkedIn CDN URLs are signed, so a
-// normal HTTP GET works; Chrome's resource cache is only a fallback.
+// embedThreadImages turns leftover http(s) photo URLs into data URLs using
+// Chrome (cache or Network.loadNetworkResource). Go's net/http client is not
+// used — LinkedIn cookies contain '"' which net/http drops.
 func (s *Session) embedThreadImages(data *pdfhtml.Thread) {
 	if data == nil {
 		return
@@ -52,9 +50,9 @@ func (s *Session) embedThreadImages(data *pdfhtml.Thread) {
 func (s *Session) imageToJPEGDataURL(src string) string {
 	raw := decodeDataURL(src)
 	if len(raw) == 0 && !strings.HasPrefix(src, "data:") {
-		raw, _ = s.httpImageBytes(src)
+		raw, _ = s.cachedResourceBytes(src)
 		if len(raw) == 0 {
-			raw, _ = s.cachedResourceBytes(src)
+			raw, _ = s.chromeFetchBytes(src)
 		}
 	}
 	if len(raw) < 24 {
@@ -70,51 +68,6 @@ func (s *Session) imageToJPEGDataURL(src string) string {
 		return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw)
 	}
 	return ""
-}
-
-func (s *Session) httpImageBytes(imgURL string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(s.runCtx(), 15*time.Second)
-	defer cancel()
-
-	var cookies []*network.Cookie
-	_ = chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		var err error
-		cookies, err = network.GetCookies().Do(ctx)
-		return err
-	}))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imgURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if s.userAgent != "" {
-		req.Header.Set("User-Agent", s.userAgent)
-	}
-	req.Header.Set("Referer", "https://www.linkedin.com/")
-	req.Header.Set("Accept", "image/jpeg,image/png,image/webp,image/*;q=0.8")
-	for _, c := range cookies {
-		if c == nil {
-			continue
-		}
-		req.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value})
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("http %d", resp.StatusCode)
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > maxImageBytes {
-		return nil, fmt.Errorf("image too large")
-	}
-	return raw, nil
 }
 
 func (s *Session) cachedResourceBytes(target string) ([]byte, error) {
@@ -136,6 +89,69 @@ func (s *Session) cachedResourceBytes(target string) ([]byte, error) {
 		return nil
 	}))
 	return raw, err
+}
+
+func (s *Session) chromeFetchBytes(imgURL string) ([]byte, error) {
+	var raw []byte
+	err := chromedp.Run(s.runCtx(), chromedp.ActionFunc(func(ctx context.Context) error {
+		tree, err := page.GetResourceTree().Do(ctx)
+		if err != nil {
+			return err
+		}
+		if tree == nil || tree.Frame == nil {
+			return fmt.Errorf("no frame")
+		}
+		res, err := network.LoadNetworkResource(imgURL, &network.LoadNetworkResourceOptions{
+			DisableCache:       false,
+			IncludeCredentials: true,
+		}).WithFrameID(tree.Frame.ID).Do(ctx)
+		if err != nil {
+			return err
+		}
+		if res == nil || !res.Success || res.Stream == "" {
+			if res != nil && res.NetErrorName != "" {
+				return fmt.Errorf("%s", res.NetErrorName)
+			}
+			return fmt.Errorf("chrome fetch failed")
+		}
+		body, err := readChromeStream(ctx, res.Stream)
+		if err != nil {
+			return err
+		}
+		raw = body
+		return nil
+	}))
+	return raw, err
+}
+
+func readChromeStream(ctx context.Context, handle cdpio.StreamHandle) ([]byte, error) {
+	defer func() { _ = cdpio.Close(handle).Do(ctx) }()
+	var buf bytes.Buffer
+	for {
+		p := cdpio.Read(handle).WithSize(256 << 10)
+		var res cdpio.ReadReturns
+		if err := cdp.Execute(ctx, cdpio.CommandRead, p, &res); err != nil {
+			return nil, err
+		}
+		var chunk []byte
+		if res.Base64encoded {
+			decoded, err := base64.StdEncoding.DecodeString(res.Data)
+			if err != nil {
+				return nil, err
+			}
+			chunk = decoded
+		} else {
+			chunk = []byte(res.Data)
+		}
+		if buf.Len()+len(chunk) > maxImageBytes {
+			return nil, fmt.Errorf("image too large")
+		}
+		buf.Write(chunk)
+		if res.EOF {
+			break
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func findImageResource(tree *page.FrameResourceTree, target string) (cdp.FrameID, string, bool) {
@@ -180,7 +196,6 @@ func resourceKey(u string) string {
 	return u
 }
 
-// rasterToJPEG re-encodes webp/avif/png bytes as JPEG via Chrome (not the live <img>).
 func (s *Session) rasterToJPEG(raw []byte) (string, error) {
 	if s == nil || s.ctx == nil {
 		return "", fmt.Errorf("no browser")
